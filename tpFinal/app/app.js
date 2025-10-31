@@ -6,177 +6,140 @@ import {
 import * as Location from 'expo-location';
 import * as ImagePicker from 'expo-image-picker';
 import * as Localization from 'expo-localization';
-import ModalAlert from '../src/components/ModalAlert'; // <- si estás en app/app.js
-// Si estás en App.js (raíz):  import ModalAlert from './src/components/ModalAlert';
+import ModalAlert from '../src/components/ModalAlert'; // si usás App.js en raíz: './src/components/ModalAlert'
 
 export default function App() {
   // ---------- Modal ----------
-  const [modal, setModal] = useState({ visible: false, mode: null }); // mode: 'create'|'delete'
+  const [modal, setModal] = useState({ visible: false, mode: null }); // 'create' | 'delete'
 
   // ---------- Localization ----------
   const deviceLocale = Localization.getLocales?.()[0]?.languageTag || 'es-AR';
-  const deviceCurrency = Localization.getLocales?.()[0]?.currencyCode || 'ARS';
   const deviceTZ = Localization.timezone || 'America/Argentina/Buenos_Aires';
   const [locale, setLocale] = useState(deviceLocale);
-  const [currency, setCurrency] = useState(deviceCurrency);
 
-  // ---------- WorldTag (último registro) ----------
+  // ---------- WorldTag ----------
   const [entry, setEntry] = useState(null); // { uri, coords, address, capturedAt }
 
-  // ---------- Permisos base (ubicación) ----------
   useEffect(() => {
     (async () => {
       const { status } = await Location.requestForegroundPermissionsAsync();
-      if (status !== 'granted') {
-        // no bloqueamos la app: podrás crear luego cuando el usuario acepte
-        console.warn('Permiso de ubicación denegado');
-      }
+      if (status !== 'granted') console.warn('Permiso de ubicación denegado');
     })();
   }, []);
 
-  // ---------- Helpers de formato ----------
-  const moneyFmt = useMemo(
-    () => new Intl.NumberFormat(locale, { style: 'currency', currency, minimumFractionDigits: 2 }),
-    [locale, currency]
-  );
+  // ---------- Formato ----------
   const dateFmt = useMemo(
     () => new Intl.DateTimeFormat(locale, { dateStyle: 'full', timeStyle: 'short', timeZone: deviceTZ }),
     [locale, deviceTZ]
   );
+  const fmtCoords = (c) => `Lat ${c.latitude.toFixed(6)} · Lon ${c.longitude.toFixed(6)}`;
 
-  const fmtCoords = (c) =>
-    `Lat ${c.latitude.toFixed(6)} · Lon ${c.longitude.toFixed(6)}`;
+  const formatPlace = (address) => {
+    if (!address) return '—';
+    const city = address.city || address.district || null;
+    let region = address.region || null;
+    const country = address.country || null;
+    if (region && region.toLowerCase().includes('ciudad autónoma de buenos aires')) region = 'CABA';
+    if (city && region && city.toLowerCase() === region.toLowerCase()) region = null;
+    const parts = [city, region, country].filter(Boolean);
+    return parts.length ? parts.join(', ') : 'Cerca de tu ubicación';
+  };
 
-  // ---------- Crear WorldTag (foto + gps + address) ----------
+  // ---------- Acciones ----------
   const handleCreateEntry = async () => {
     try {
-      // 1) Cámara
       const cam = await ImagePicker.requestCameraPermissionsAsync();
-      if (cam.status !== 'granted') {
-        alert('Necesitamos permiso de cámara.');
-        return;
-      }
-      const photo = await ImagePicker.launchCameraAsync({
-        allowsEditing: true, aspect: [4, 3], quality: 1,
-      });
+      if (cam.status !== 'granted') { alert('Necesitamos permiso de cámara.'); return; }
+      const photo = await ImagePicker.launchCameraAsync({ allowsEditing: true, aspect: [4, 3], quality: 1 });
       if (photo.canceled) return;
       const uri = photo.assets?.[0]?.uri ?? photo.uri;
 
-      // 2) Ubicación
       const { status } = await Location.getForegroundPermissionsAsync();
-      if (status !== 'granted') {
-        alert('Necesitamos permiso de ubicación.');
-        return;
-      }
+      if (status !== 'granted') { alert('Necesitamos permiso de ubicación.'); return; }
       const pos = await Location.getCurrentPositionAsync({});
       const coords = pos.coords;
 
-      // 3) Reverse geocode (ciudad/país)
       let address = { city: null, region: null, country: null };
       try {
-        const r = await Location.reverseGeocodeAsync({
-          latitude: coords.latitude,
-          longitude: coords.longitude,
-        });
+        const r = await Location.reverseGeocodeAsync({ latitude: coords.latitude, longitude: coords.longitude });
         const a = r?.[0];
-        address = {
-          city: a?.city || a?.district || null,
-          region: a?.region || null,
-          country: a?.country || null,
-        };
-      } catch (e) {
-        // si falla, seguimos con coords
-      }
+        address = { city: a?.city || a?.district || null, region: a?.region || null, country: a?.country || null };
+      } catch {}
 
-      // 4) Guardar en estado (último registro)
-      setEntry({
-        uri,
-        coords,
-        address,
-        capturedAt: new Date().toISOString(),
-      });
-    } catch (e) {
-      console.warn(e);
+      setEntry({ uri, coords, address, capturedAt: new Date().toISOString() });
     } finally {
       setModal({ visible: false, mode: null });
     }
   };
-
-  const handleDeleteEntry = () => {
-    setEntry(null);
-    setModal({ visible: false, mode: null });
-  };
+  const handleDeleteEntry = () => { setEntry(null); setModal({ visible: false, mode: null }); };
 
   // ---------- UI ----------
   return (
     <View style={s.root}>
       <ScrollView contentContainerStyle={s.container} showsVerticalScrollIndicator={false}>
-        {/* Header */}
+        {/* HEADER */}
         <View style={s.header}>
-          <Text style={s.title}>WorldTag — Travel Micro-Journal</Text>
-          <Text style={s.subtitle}>
-            Cámara · Ubicación · Localization · Confirmaciones (Modal)
-          </Text>
+          <Text style={s.eyebrow}>WorldTag</Text>
+          <Text style={s.title}>Travel Micro-Journal</Text>
+          <View style={s.badges}>
+            <Badge>📸 Cámara</Badge>
+            <Badge>📍 Ubicación</Badge>
+            <Badge>🌐 Localization</Badge>
+            <Badge>✅ Modal</Badge>
+          </View>
         </View>
 
-        {/* Crear registro */}
+        {/* NUEVO */}
         <Card>
-          <SectionTitle>Nuevo WorldTag</SectionTitle>
-          <Text style={s.text}>
-            Capturá una foto, se geoetiqueta automáticamente y se formatea según el locale elegido.
+          <CardHeader title="Nuevo WorldTag" />
+          <Text style={s.body}>
+            Capturá una foto, se geoetiqueta automáticamente y se muestra con formato regional.
           </Text>
-          <PrimaryButton
-            label="Crear registro"
-            onPress={() => setModal({ visible: true, mode: 'create' })}
-          />
+          <PrimaryButton label="Crear registro" onPress={() => setModal({ visible: true, mode: 'create' })} />
         </Card>
 
-        {/* Último registro (sin FlatList) */}
+        {/* ÚLTIMO REGISTRO */}
         <Card>
-          <SectionTitle>Último registro</SectionTitle>
+          <CardHeader title="Último registro" />
           {entry ? (
             <View>
-              <Image source={{ uri: entry.uri }} style={s.preview} resizeMode="cover" />
+              <Image source={{ uri: entry.uri }} style={s.media} resizeMode="cover" />
               <Divider />
-              <KeyValue k="Lugar" v={
-                [entry.address.city, entry.address.region, entry.address.country]
-                  .filter(Boolean).join(', ') || '—'
-              } />
-              <KeyValue k="Coordenadas" v={fmtCoords(entry.coords)} />
-              <KeyValue k="Fecha/Hora" v={dateFmt.format(new Date(entry.capturedAt))} />
-              <View style={s.row}>
-                <SecondaryButton
-                  label="Eliminar"
-                  onPress={() => setModal({ visible: true, mode: 'delete' })}
-                />
-              </View>
+              <Row>
+                <Label>Ubicación</Label>
+                <View style={{ flex: 1 }}>
+                  <Text style={s.valueStrong}>📍 {formatPlace(entry.address)}</Text>
+                  <Text style={s.valueMuted}>{fmtCoords(entry.coords)}</Text>
+                </View>
+              </Row>
+              <Row>
+                <Label>Fecha/Hora</Label>
+                <Text style={s.value}>{dateFmt.format(new Date(entry.capturedAt))}</Text>
+              </Row>
+              <Actions>
+                <SecondaryButton label="Eliminar" onPress={() => setModal({ visible: true, mode: 'delete' })} />
+              </Actions>
             </View>
           ) : (
-            <Text style={s.textMuted}>Aún no hay registros. Creá el primero.</Text>
+            <EmptyState title="Aún no hay registros" subtitle="Creá el primero desde el botón." />
           )}
         </Card>
 
-        {/* Localization (selector) */}
+        {/* LOCALIZATION */}
         <Card>
-          <SectionTitle>Preferencias regionales</SectionTitle>
-          <Text style={s.textMutedSmall}>
-            Dispositivo: {deviceLocale} · {deviceTZ}
-          </Text>
-          <View style={s.rowWrap}>
-            <Chip label="es AR" active={locale==='es-AR'}
-              onPress={() => { setLocale('es-AR');}} />
-            <Chip label="en US" active={locale==='en-US'}
-              onPress={() => { setLocale('en-US'); }} />
-            <Chip label="pt BR" active={locale==='pt-BR'}
-              onPress={() => { setLocale('pt-BR');}} />
-          </View>
-          <Divider />
+          <CardHeader title="Preferencias regionales" />
+          <Text style={s.helper}>Dispositivo: {deviceLocale} · {deviceTZ}</Text>
+          <Segment>
+            <Chip label="🇦🇷 es-AR" active={locale==='es-AR'} onPress={() => setLocale('es-AR')} />
+            <Chip label="🇺🇸 en-US" active={locale==='en-US'} onPress={() => setLocale('en-US')} />
+            <Chip label="🇧🇷 pt-BR" active={locale==='pt-BR'} onPress={() => setLocale('pt-BR')} />
+          </Segment>
         </Card>
 
-        <View style={{ height: 24 }} />
+        <View style={{ height: 28 }} />
       </ScrollView>
 
-      {/* Modal centralizado para crear/eliminar */}
+      {/* MODAL */}
       <ModalAlert
         visible={modal.visible}
         onClose={() => setModal({ visible: false, mode: null })}
@@ -197,21 +160,19 @@ export default function App() {
   );
 }
 
-/* ---------- UI helpers ---------- */
-function Card({ children }) {
-  return <View style={s.card}>{children}</View>;
-}
-function SectionTitle({ children }) {
-  return <Text style={s.sectionTitle}>{children}</Text>;
-}
-function Divider() {
-  return <View style={s.divider} />;
-}
-function KeyValue({ k, v }) {
+/* ---------- Sub-componentes UI (para que el estilo se note más) ---------- */
+function Badge({ children }) { return <View style={s.badge}><Text style={s.badgeText}>{children}</Text></View>; }
+function Card({ children }) { return <View style={s.card}>{children}</View>; }
+function CardHeader({ title }) { return <Text style={s.cardTitle}>{title}</Text>; }
+function Divider() { return <View style={s.divider} />; }
+function Row({ children }) { return <View style={s.row}>{children}</View>; }
+function Label({ children }) { return <Text style={s.label}>{children}</Text>; }
+function Actions({ children }) { return <View style={s.actions}>{children}</View>; }
+function EmptyState({ title, subtitle }) {
   return (
-    <View style={s.kvRow}>
-      <Text style={s.kKey}>{k}</Text>
-      <Text style={s.kVal}>{v}</Text>
+    <View style={s.empty}>
+      <Text style={s.emptyTitle}>{title}</Text>
+      <Text style={s.emptySub}>{subtitle}</Text>
     </View>
   );
 }
@@ -229,76 +190,106 @@ function SecondaryButton({ label, onPress }) {
     </Pressable>
   );
 }
+function Segment({ children }) { return <View style={s.segment}>{children}</View>; }
 function Chip({ label, active, onPress }) {
   return (
-    <Pressable onPress={onPress} style={[s.chip, active && s.chipActive]} android_ripple={{ color: '#00000012' }}>
+    <Pressable onPress={onPress} style={[s.chip, active && s.chipActive]} android_ripple={{ color: '#00000010' }}>
       <Text style={[s.chipText, active && s.chipTextActive]}>{label}</Text>
     </Pressable>
   );
 }
 
-/* ---------- Styles (sobrios) ---------- */
+/* ---------- ESTILOS: versión mejor trabajada ---------- */
 const s = StyleSheet.create({
-  root: { flex: 1, backgroundColor: '#F6F7FB' },
-  container: { paddingHorizontal: 16, paddingTop: 28, paddingBottom: 12, alignItems: 'center' },
+  /* Base */
+  root: { flex: 1, backgroundColor: '#F3F5F8' },
+  container: { paddingHorizontal: 16, paddingTop: 26, paddingBottom: 16, alignItems: 'center' },
 
-  header: { width: '100%', maxWidth: 720, marginBottom: 12 },
-  title: { fontSize: 22, fontWeight: '800', color: '#0F172A', letterSpacing: 0.2 },
-  subtitle: { marginTop: 4, color: '#475569' },
+  /* Header mejorado */
+  header: { width: '100%', maxWidth: 760, marginBottom: 8 },
+  eyebrow: { color: '#6B7280', fontSize: 12, fontWeight: '700', letterSpacing: 1, textTransform: 'uppercase' },
+  title: { marginTop: 2, fontSize: 26, lineHeight: 32, fontWeight: '900', color: '#0F172A' },
+  badges: { flexDirection: 'row', flexWrap: 'wrap', marginTop: 8, marginHorizontal: -4 },
+  badge: {
+    backgroundColor: '#EEF2FF', borderColor: '#C7D2FE', borderWidth: 1,
+    borderRadius: 999, paddingVertical: 6, paddingHorizontal: 10, marginHorizontal: 4, marginVertical: 4,
+  },
+  badgeText: { color: '#1E3A8A', fontWeight: '700', fontSize: 12.5 },
 
+  /* Cards con acento lateral y mejor sombra */
   card: {
-    width: '100%', maxWidth: 720,
+    width: '100%', maxWidth: 760,
     backgroundColor: '#FFFFFF',
-    borderRadius: 14,
-    padding: 16,
-    marginVertical: 8,
+    borderRadius: 16,
+    padding: 18,
+    marginVertical: 10,
     borderWidth: 1, borderColor: '#E5E7EB',
     overflow: 'hidden',
+    borderLeftWidth: 4,               // acento principal visible
+    borderLeftColor: '#2563EB33',
     ...shadow(Platform.OS),
   },
+  cardTitle: { color: '#0F172A', fontSize: 18, fontWeight: '900', marginBottom: 10, letterSpacing: 0.2 },
 
-  sectionTitle: { color: '#0F172A', fontSize: 16, fontWeight: '800', marginBottom: 8 },
+  /* Tipos de texto */
+  body: { color: '#334155', lineHeight: 20 },
+  helper: { color: '#6B7280', fontSize: 12.5 },
 
-  text: { color: '#334155', lineHeight: 20 },
-  textMuted: { color: '#64748B' },
-  textMutedSmall: { color: '#64748B', fontSize: 12.5 },
-  row: { flexDirection: 'row', gap: 8, marginTop: 8 },
-
-  // chips
-  rowWrap: { flexDirection: 'row', flexWrap: 'wrap', marginTop: 8, marginBottom: 6, marginHorizontal: -4 },
-  chip: {
-    paddingVertical: 8, paddingHorizontal: 12, borderRadius: 999,
-    backgroundColor: '#F1F5F9', borderWidth: 1, borderColor: '#E2E8F0',
-    marginHorizontal: 4, marginVertical: 4,
-  },
-  chipActive: { backgroundColor: '#E0E7FF', borderColor: '#C7D2FE' },
-  chipText: { color: '#0F172A', fontWeight: '600' },
-  chipTextActive: { color: '#1D4ED8', fontWeight: '700' },
-
-  // KVs
-  divider: { height: 1, backgroundColor: '#E5E7EB', marginVertical: 10, borderRadius: 10 },
-  kvRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 12, marginVertical: 4 },
-  kKey: { color: '#334155', fontWeight: '700' },
-  kVal: { color: '#0F172A' },
-
-  // imagen
-  preview: {
-    width: '100%', aspectRatio: 4 / 3, borderRadius: 12, marginTop: 8,
+  /* Media */
+  media: {
+    width: '100%', aspectRatio: 4 / 3, borderRadius: 14, marginTop: 6,
     borderWidth: 1, borderColor: '#E5E7EB', alignSelf: 'stretch',
   },
 
-  // botones
-  btn: { borderRadius: 10, paddingVertical: 12, paddingHorizontal: 16, alignSelf: 'flex-start', marginTop: 8 },
-  btnPrimary: { backgroundColor: '#2563EB' },
-  btnPrimaryText: { color: '#FFFFFF', fontWeight: '700', letterSpacing: 0.2 },
-  btnPressed: { opacity: 0.9 },
-  btnGhost: { backgroundColor: '#F1F5F9', borderWidth: 1, borderColor: '#E2E8F0' },
-  btnGhostText: { color: '#0F172A', fontWeight: '700', letterSpacing: 0.2 },
-  btnGhostPressed: { opacity: 0.9 },
+  /* Filas clave-valor */
+  row: { flexDirection: 'row', alignItems: 'flex-start', marginTop: 10 },
+  label: {
+    width: 120, color: '#374151', fontWeight: '800', letterSpacing: 0.3,
+    textTransform: 'none', paddingTop: 2,
+  },
+  value: { flex: 1, color: '#111827' },
+  valueStrong: { flex: 1, color: '#0B1324', fontWeight: '700' },
+  valueMuted: { flex: 1, color: '#6B7280', marginTop: 2, fontSize: 12.5 },
+
+  divider: { height: 1, backgroundColor: '#E6E8EB', marginVertical: 12, borderRadius: 10 },
+
+  /* Empty state */
+  empty: { paddingVertical: 8 },
+  emptyTitle: { color: '#0F172A', fontWeight: '800' },
+  emptySub: { color: '#6B7280' },
+
+  /* Botones */
+  actions: { flexDirection: 'row', marginTop: 10 },
+  btn: { borderRadius: 12, paddingVertical: 12, paddingHorizontal: 16, alignSelf: 'flex-start' },
+  btnPrimary: { backgroundColor: '#2563EB', ...shadowBtn(Platform.OS) },
+  btnPrimaryText: { color: '#FFFFFF', fontWeight: '800', letterSpacing: 0.2 },
+  btnPressed: { opacity: 0.94 },
+  btnGhost: { backgroundColor: '#F3F4F6', borderWidth: 1, borderColor: '#E5E7EB' },
+  btnGhostText: { color: '#0F172A', fontWeight: '800', letterSpacing: 0.2 },
+  btnGhostPressed: { opacity: 0.98 },
+
+  /* Segmento idiomas */
+  segment: {
+    flexDirection: 'row', backgroundColor: '#F3F4F6', borderRadius: 12,
+    borderWidth: 1, borderColor: '#E5E7EB', padding: 4, marginTop: 10,
+  },
+  chip: {
+    paddingVertical: 8, paddingHorizontal: 12, borderRadius: 10,
+    backgroundColor: 'transparent', marginRight: 6,
+  },
+  chipActive: { backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: '#C7D2FE' },
+  chipText: { color: '#111827', fontWeight: '700' },
+  chipTextActive: { color: '#1D4ED8', fontWeight: '800' },
 });
 
+/* sombras */
 function shadow(os) {
   return os === 'ios'
-    ? { shadowColor: '#000', shadowOpacity: 0.08, shadowRadius: 8, shadowOffset: { width: 0, height: 4 } }
+    ? { shadowColor: '#000', shadowOpacity: 0.08, shadowRadius: 10, shadowOffset: { width: 0, height: 6 } }
+    : { elevation: 4 };
+}
+function shadowBtn(os) {
+  return os === 'ios'
+    ? { shadowColor: '#2563EB', shadowOpacity: 0.25, shadowRadius: 6, shadowOffset: { width: 0, height: 4 } }
     : { elevation: 3 };
 }
